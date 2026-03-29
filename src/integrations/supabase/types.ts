@@ -18,8 +18,10 @@ export type Database = {
         Row: {
           created_at: string
           email: string
+          final_decision_at: string | null
           id: string
           name: string
+          provisional_decision_at: string | null
           reviewer_notes: string | null
           status: Database["public"]["Enums"]["application_status"]
           student_id: string
@@ -29,8 +31,10 @@ export type Database = {
         Insert: {
           created_at?: string
           email: string
+          final_decision_at?: string | null
           id?: string
           name: string
+          provisional_decision_at?: string | null
           reviewer_notes?: string | null
           status?: Database["public"]["Enums"]["application_status"]
           student_id: string
@@ -40,13 +44,42 @@ export type Database = {
         Update: {
           created_at?: string
           email?: string
+          final_decision_at?: string | null
           id?: string
           name?: string
+          provisional_decision_at?: string | null
           reviewer_notes?: string | null
           status?: Database["public"]["Enums"]["application_status"]
           student_id?: string
           student_number?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      deadline_extensions: {
+        Row: {
+          created_at: string
+          granted_by: string
+          id: string
+          new_deadline: string
+          reason: string | null
+          student_id: string
+        }
+        Insert: {
+          created_at?: string
+          granted_by: string
+          id?: string
+          new_deadline: string
+          reason?: string | null
+          student_id: string
+        }
+        Update: {
+          created_at?: string
+          granted_by?: string
+          id?: string
+          new_deadline?: string
+          reason?: string | null
+          student_id?: string
         }
         Relationships: []
       }
@@ -113,6 +146,36 @@ export type Database = {
         }
         Relationships: []
       }
+      placement_issues: {
+        Row: {
+          created_at: string
+          flagged_by: string
+          id: string
+          reason: string
+          resolved: boolean
+          resolved_at: string | null
+          student_id: string
+        }
+        Insert: {
+          created_at?: string
+          flagged_by: string
+          id?: string
+          reason: string
+          resolved?: boolean
+          resolved_at?: string | null
+          student_id: string
+        }
+        Update: {
+          created_at?: string
+          flagged_by?: string
+          id?: string
+          reason?: string
+          resolved?: boolean
+          resolved_at?: string | null
+          student_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -134,6 +197,33 @@ export type Database = {
           id?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      reminder_logs: {
+        Row: {
+          id: string
+          recipient_email: string
+          recipient_id: string
+          reminder_type: string
+          sent_at: string
+          sent_by: string
+        }
+        Insert: {
+          id?: string
+          recipient_email: string
+          recipient_id: string
+          reminder_type: string
+          sent_at?: string
+          sent_by: string
+        }
+        Update: {
+          id?: string
+          recipient_email?: string
+          recipient_id?: string
+          reminder_type?: string
+          sent_at?: string
+          sent_by?: string
         }
         Relationships: []
       }
@@ -198,7 +288,13 @@ export type Database = {
     }
     Enums: {
       app_role: "student" | "coordinator" | "supervisor" | "admin"
-      application_status: "pending" | "provisional" | "accepted" | "rejected"
+      application_status:
+        | "pending"
+        | "provisional"
+        | "accepted"
+        | "rejected"
+        | "provisional_accepted"
+        | "provisional_rejected"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -327,7 +423,14 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["student", "coordinator", "supervisor", "admin"],
-      application_status: ["pending", "provisional", "accepted", "rejected"],
+      application_status: [
+        "pending",
+        "provisional",
+        "accepted",
+        "rejected",
+        "provisional_accepted",
+        "provisional_rejected",
+      ],
     },
   },
 } as const
