@@ -1,10 +1,16 @@
 import AppLayout from "@/components/AppLayout";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle, XCircle, Clock, FileText, AlertTriangle, Users } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { CheckCircle, XCircle, Clock, FileText, AlertTriangle, Users, Flag } from "lucide-react";
+import { toast } from "sonner";
 
 const CoordinatorOverview = () => {
+  const queryClient = useQueryClient();
+
   const { data: applications } = useQuery({
     queryKey: ["all-applications"],
     queryFn: async () => {
@@ -32,22 +38,53 @@ const CoordinatorOverview = () => {
     },
   });
 
+  const { data: placementIssues } = useQuery({
+    queryKey: ["placement-issues"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("placement_issues").select("*").eq("resolved", false);
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const resolveIssue = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("placement_issues")
+        .update({ resolved: true, resolved_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Issue resolved");
+      queryClient.invalidateQueries({ queryKey: ["placement-issues"] });
+    },
+  });
+
+  const provAccepted = applications?.filter((a) => a.status === "provisional_accepted").length ?? 0;
+  const provRejected = applications?.filter((a) => a.status === "provisional_rejected").length ?? 0;
   const accepted = applications?.filter((a) => a.status === "accepted").length ?? 0;
   const rejected = applications?.filter((a) => a.status === "rejected").length ?? 0;
   const pending = applications?.filter((a) => a.status === "pending").length ?? 0;
-  const provisional = applications?.filter((a) => a.status === "provisional").length ?? 0;
   const totalReports = reports?.length ?? 0;
-  const missingReports = accepted - totalReports;
-  const totalEvaluations = evaluations?.length ?? 0;
+  const missingReports = Math.max(0, accepted - totalReports);
+
+  // Students with evaluations (by student_number match)
+  const acceptedStudentNumbers = new Set(
+    applications?.filter((a) => a.status === "accepted").map((a) => a.student_number)
+  );
+  const evaluatedStudentNumbers = new Set(evaluations?.map((e) => e.student_number));
+  const missingEvaluations = [...acceptedStudentNumbers].filter((sn) => !evaluatedStudentNumbers.has(sn)).length;
 
   const stats = [
-    { label: "Accepted", value: accepted, icon: CheckCircle, color: "text-[hsl(var(--success))]" },
-    { label: "Rejected", value: rejected, icon: XCircle, color: "text-destructive" },
-    { label: "Pending", value: pending, icon: Clock, color: "text-[hsl(var(--warning))]" },
-    { label: "Provisional", value: provisional, icon: Clock, color: "text-primary" },
-    { label: "Reports Submitted", value: totalReports, icon: FileText, color: "text-primary" },
-    { label: "Missing Reports", value: Math.max(0, missingReports), icon: AlertTriangle, color: "text-destructive" },
-    { label: "Evaluations", value: totalEvaluations, icon: Users, color: "text-[hsl(var(--accent))]" },
+    { label: "Prov. Accepted", value: provAccepted, icon: CheckCircle, color: "text-primary" },
+    { label: "Prov. Rejected", value: provRejected, icon: XCircle, color: "text-[hsl(var(--warning))]" },
+    { label: "Finally Accepted", value: accepted, icon: CheckCircle, color: "text-[hsl(var(--success))]" },
+    { label: "Finally Rejected", value: rejected, icon: XCircle, color: "text-destructive" },
+    { label: "Pending", value: pending, icon: Clock, color: "text-muted-foreground" },
+    { label: "Missing Reports", value: missingReports, icon: FileText, color: "text-destructive" },
+    { label: "Missing Evaluations", value: missingEvaluations, icon: Users, color: "text-destructive" },
+    { label: "Placement Issues", value: placementIssues?.length ?? 0, icon: Flag, color: "text-[hsl(var(--warning))]" },
   ];
 
   return (
@@ -78,6 +115,54 @@ const CoordinatorOverview = () => {
             );
           })}
         </div>
+
+        {/* Placement Issues Section */}
+        {placementIssues && placementIssues.length > 0 && (
+          <Card className="border-[hsl(var(--warning))]">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-[hsl(var(--warning))]" />
+                Active Placement Issues
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Student ID</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>Flagged</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {placementIssues.map((issue) => {
+                    const app = applications?.find((a) => a.student_id === issue.student_id);
+                    return (
+                      <TableRow key={issue.id}>
+                        <TableCell className="font-medium">{app?.name ?? issue.student_id.slice(0, 8)}</TableCell>
+                        <TableCell>{issue.reason}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {new Date(issue.created_at).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => resolveIssue.mutate(issue.id)}
+                            disabled={resolveIssue.isPending}
+                          >
+                            Resolve
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </AppLayout>
   );

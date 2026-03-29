@@ -1,12 +1,18 @@
 import AppLayout from "@/components/AppLayout";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Star } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Star, Bell } from "lucide-react";
+import { toast } from "sonner";
 
 const CoordinatorEvaluations = () => {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
   const { data: evaluations } = useQuery({
     queryKey: ["all-evaluations"],
     queryFn: async () => {
@@ -16,6 +22,57 @@ const CoordinatorEvaluations = () => {
     },
   });
 
+  const { data: reminderLogs } = useQuery({
+    queryKey: ["reminder-logs", "evaluation"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("reminder_logs").select("*").eq("reminder_type", "evaluation").order("sent_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Get supervisors who have roles
+  const { data: supervisors } = useQuery({
+    queryKey: ["supervisor-profiles"],
+    queryFn: async () => {
+      const { data: roles, error } = await supabase.from("user_roles").select("user_id").eq("role", "supervisor");
+      if (error) throw error;
+      if (!roles || roles.length === 0) return [];
+      const userIds = roles.map((r) => r.user_id);
+      const { data: profiles, error: pErr } = await supabase.from("profiles").select("*").in("user_id", userIds);
+      if (pErr) throw pErr;
+      return profiles;
+    },
+  });
+
+  const sendReminder = useMutation({
+    mutationFn: async (sup: { user_id: string; full_name: string }) => {
+      const { error } = await supabase.from("reminder_logs").insert({
+        recipient_id: sup.user_id,
+        recipient_email: sup.full_name, // placeholder — real email from auth
+        reminder_type: "evaluation",
+        sent_by: user!.id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Reminder logged");
+      queryClient.invalidateQueries({ queryKey: ["reminder-logs"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const supervisorsWithoutEvals = supervisors?.filter(
+    (sup) => !evaluations?.some((ev) => ev.supervisor_id === sup.user_id)
+  );
+
+  const lastReminderBySupervisor = new Map<string, string>();
+  reminderLogs?.forEach((log) => {
+    if (!lastReminderBySupervisor.has(log.recipient_id)) {
+      lastReminderBySupervisor.set(log.recipient_id, log.sent_at);
+    }
+  });
+
   return (
     <AppLayout>
       <div className="space-y-6">
@@ -23,8 +80,49 @@ const CoordinatorEvaluations = () => {
           <h1 className="text-2xl font-bold tracking-tight" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
             Supervisor Evaluations
           </h1>
-          <p className="text-muted-foreground">View all submitted evaluations</p>
+          <p className="text-muted-foreground">View all submitted evaluations and send reminders</p>
         </div>
+
+        {supervisorsWithoutEvals && supervisorsWithoutEvals.length > 0 && (
+          <Card className="border-[hsl(var(--warning))]">
+            <CardHeader>
+              <CardTitle className="text-sm">Supervisors Without Evaluations</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Last Reminder</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {supervisorsWithoutEvals.map((sup) => (
+                    <TableRow key={sup.user_id}>
+                      <TableCell className="font-medium">{sup.full_name || "Unknown"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {lastReminderBySupervisor.get(sup.user_id)
+                          ? new Date(lastReminderBySupervisor.get(sup.user_id)!).toLocaleString()
+                          : "Never"}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => sendReminder.mutate(sup)}
+                          disabled={sendReminder.isPending}
+                        >
+                          <Bell className="h-4 w-4 mr-1" /> Remind
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

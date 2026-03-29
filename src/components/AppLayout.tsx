@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { LogOut, LayoutDashboard, FileText, ClipboardCheck, Users, BarChart3 } from "lucide-react";
+import { LogOut, LayoutDashboard, FileText, ClipboardCheck, Users, BarChart3, Flag } from "lucide-react";
 
 const AppLayout = ({ children }: { children: React.ReactNode }) => {
   const { role, signOut, user } = useAuth();
@@ -43,7 +43,7 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-1 overflow-x-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.to;
@@ -63,7 +63,7 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
           </nav>
 
           <div className="flex items-center gap-3">
-            <span className="hidden sm:block text-sm text-muted-foreground">
+            <span className="hidden md:block text-sm text-muted-foreground truncate max-w-[150px]">
               {user?.email}
             </span>
             <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary capitalize">
