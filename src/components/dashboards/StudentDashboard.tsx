@@ -8,13 +8,15 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Send, Upload, CheckCircle, Clock, XCircle, FileText } from "lucide-react";
+import { Send, Upload, CheckCircle, Clock, XCircle, FileText, Download, AlertTriangle } from "lucide-react";
 
-const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof CheckCircle }> = {
+const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof CheckCircle; color?: string }> = {
   pending: { label: "Pending Review", variant: "secondary", icon: Clock },
-  provisional: { label: "Provisionally Accepted", variant: "outline", icon: Clock },
-  accepted: { label: "Accepted", variant: "default", icon: CheckCircle },
-  rejected: { label: "Rejected", variant: "destructive", icon: XCircle },
+  provisional_accepted: { label: "Provisionally Accepted", variant: "outline", icon: CheckCircle, color: "text-[hsl(var(--success))]" },
+  provisional_rejected: { label: "Provisionally Rejected", variant: "destructive", icon: XCircle },
+  accepted: { label: "Finally Accepted", variant: "default", icon: CheckCircle },
+  rejected: { label: "Finally Rejected", variant: "destructive", icon: XCircle },
+  provisional: { label: "Provisional", variant: "outline", icon: Clock },
 };
 
 const StudentDashboard = () => {
@@ -23,6 +25,7 @@ const StudentDashboard = () => {
   const [name, setName] = useState("");
   const [studentNumber, setStudentNumber] = useState("");
   const [email, setEmail] = useState("");
+  const [errors, setErrors] = useState<{ studentNumber?: string; email?: string }>({});
 
   const { data: application, isLoading: appLoading } = useQuery({
     queryKey: ["my-application", user?.id],
@@ -61,6 +64,58 @@ const StudentDashboard = () => {
     },
   });
 
+  const { data: extension } = useQuery({
+    queryKey: ["my-extension", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("deadline_extensions")
+        .select("*")
+        .eq("student_id", user!.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  const { data: placementIssue } = useQuery({
+    queryKey: ["my-placement-issue", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("placement_issues")
+        .select("*")
+        .eq("student_id", user!.id)
+        .eq("resolved", false)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  // Report template
+  const { data: templateUrl } = useQuery({
+    queryKey: ["report-template"],
+    queryFn: async () => {
+      const { data } = await supabase.storage.from("templates").list("", { limit: 1, search: "report-template" });
+      if (data && data.length > 0) {
+        const { data: urlData } = supabase.storage.from("templates").getPublicUrl(data[0].name);
+        return { url: urlData.publicUrl, name: data[0].name };
+      }
+      return null;
+    },
+  });
+
+  const validate = () => {
+    const errs: typeof errors = {};
+    if (!/^\d+$/.test(studentNumber)) errs.studentNumber = "Student ID must contain numbers only";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Invalid email format";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const submitApp = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from("applications").insert({
@@ -98,7 +153,8 @@ const StudentDashboard = () => {
     onError: (e) => toast.error(e.message),
   });
 
-  const isDeadlinePassed = deadline ? new Date(deadline.deadline_date) < new Date() : false;
+  const effectiveDeadline = extension ? new Date(extension.new_deadline) : deadline ? new Date(deadline.deadline_date) : null;
+  const isDeadlinePassed = effectiveDeadline ? effectiveDeadline < new Date() : false;
 
   if (appLoading) {
     return <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
@@ -113,6 +169,18 @@ const StudentDashboard = () => {
         <p className="text-muted-foreground">Manage your co-op application and report</p>
       </div>
 
+      {placementIssue && (
+        <Card className="border-destructive">
+          <CardContent className="flex items-center gap-3 py-4">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <div>
+              <p className="font-medium text-destructive">Placement Issue Flagged</p>
+              <p className="text-sm text-muted-foreground">{placementIssue.reason}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {!application ? (
         <Card>
           <CardHeader>
@@ -123,7 +191,7 @@ const StudentDashboard = () => {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                submitApp.mutate();
+                if (validate()) submitApp.mutate();
               }}
               className="space-y-4"
             >
@@ -133,11 +201,24 @@ const StudentDashboard = () => {
               </div>
               <div className="space-y-2">
                 <Label>Student ID</Label>
-                <Input value={studentNumber} onChange={(e) => setStudentNumber(e.target.value)} required placeholder="STU-12345" />
+                <Input
+                  value={studentNumber}
+                  onChange={(e) => { setStudentNumber(e.target.value); setErrors((p) => ({ ...p, studentNumber: undefined })); }}
+                  required
+                  placeholder="12345678"
+                />
+                {errors.studentNumber && <p className="text-sm text-destructive">{errors.studentNumber}</p>}
               </div>
               <div className="space-y-2">
                 <Label>Email</Label>
-                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@university.edu" />
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setErrors((p) => ({ ...p, email: undefined })); }}
+                  required
+                  placeholder="you@university.edu"
+                />
+                {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
               </div>
               <Button type="submit" disabled={submitApp.isPending}>
                 {submitApp.isPending ? "Submitting..." : "Submit Application"}
@@ -154,7 +235,7 @@ const StudentDashboard = () => {
             <CardContent className="space-y-4">
               <div className="flex items-center gap-3">
                 {(() => {
-                  const cfg = statusConfig[application.status];
+                  const cfg = statusConfig[application.status] || statusConfig.pending;
                   const Icon = cfg.icon;
                   return (
                     <Badge variant={cfg.variant} className="text-sm px-3 py-1">
@@ -169,6 +250,16 @@ const StudentDashboard = () => {
                 <div><span className="text-muted-foreground">Student #:</span> {application.student_number}</div>
                 <div><span className="text-muted-foreground">Email:</span> {application.email}</div>
               </div>
+              {application.provisional_decision_at && (
+                <p className="text-xs text-muted-foreground">
+                  Provisional decision: {new Date(application.provisional_decision_at).toLocaleString()}
+                </p>
+              )}
+              {application.final_decision_at && (
+                <p className="text-xs text-muted-foreground">
+                  Final decision: {new Date(application.final_decision_at).toLocaleString()}
+                </p>
+              )}
               {application.reviewer_notes && (
                 <div className="rounded-lg bg-muted p-3 text-sm">
                   <span className="font-medium">Reviewer Notes:</span> {application.reviewer_notes}
@@ -177,14 +268,35 @@ const StudentDashboard = () => {
             </CardContent>
           </Card>
 
+          {/* Report template download */}
+          {templateUrl && (
+            <Card>
+              <CardContent className="flex items-center justify-between py-4">
+                <div className="flex items-center gap-3">
+                  <Download className="h-5 w-5 text-primary" />
+                  <div>
+                    <p className="font-medium">Report Template</p>
+                    <p className="text-sm text-muted-foreground">Download the template before writing your report</p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" asChild>
+                  <a href={templateUrl.url} download={templateUrl.name} target="_blank" rel="noreferrer">
+                    Download
+                  </a>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {application.status === "accepted" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> Work-Term Report</CardTitle>
                 <CardDescription>
-                  {deadline && (
+                  {effectiveDeadline && (
                     <span>
-                      Deadline: <strong>{new Date(deadline.deadline_date).toLocaleDateString()}</strong>
+                      Deadline: <strong>{effectiveDeadline.toLocaleDateString()}</strong>
+                      {extension && <span className="text-primary ml-2">(Extended)</span>}
                       {isDeadlinePassed && <span className="text-destructive ml-2">(Passed)</span>}
                     </span>
                   )}
@@ -202,15 +314,30 @@ const StudentDashboard = () => {
                     </div>
                   </div>
                 ) : isDeadlinePassed ? (
-                  <p className="text-destructive text-sm">The submission deadline has passed.</p>
+                  <div className="rounded-lg bg-destructive/10 p-4">
+                    <p className="text-destructive text-sm font-medium flex items-center gap-2">
+                      <XCircle className="h-4 w-4" />
+                      The submission deadline has passed. You can no longer upload your report.
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Contact your coordinator if you need a deadline extension.
+                    </p>
+                  </div>
                 ) : (
                   <div>
+                    <p className="text-sm text-muted-foreground mb-3">Upload your work-term report as a PDF file.</p>
                     <Input
                       type="file"
-                      accept=".pdf"
+                      accept=".pdf,application/pdf"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file) uploadReport.mutate(file);
+                        if (file) {
+                          if (file.type !== "application/pdf") {
+                            toast.error("Only PDF files are accepted");
+                            return;
+                          }
+                          uploadReport.mutate(file);
+                        }
                       }}
                       disabled={uploadReport.isPending}
                     />
