@@ -22,7 +22,18 @@ const ProtectedRoute = ({ children, allowedRoles }: Props) => {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  if (allowedRoles && role && !allowedRoles.includes(role)) {
+  // Authenticated but no role assigned — likely a trigger failure during signup.
+  if (role === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <p className="text-muted-foreground text-sm">
+          Your account has no role assigned. Please contact a coordinator.
+        </p>
+      </div>
+    );
+  }
+
+  if (allowedRoles && !allowedRoles.includes(role)) {
     return <Navigate to="/dashboard" replace />;
   }
 

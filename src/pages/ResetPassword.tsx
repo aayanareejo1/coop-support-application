@@ -16,21 +16,33 @@ const ResetPassword = () => {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // Supabase handles the token from URL automatically via onAuthStateChange
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    let resolved = false;
+
+    // PASSWORD_RECOVERY event fires when Supabase processes the reset token from the URL hash.
+    // We must wait for this event before concluding the link is invalid.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
         setValidSession(true);
+        setChecking(false);
+        resolved = true;
+      } else if (!resolved) {
+        // A non-recovery event (e.g. SIGNED_IN from a different tab) fired first —
+        // wait a tick to give PASSWORD_RECOVERY a chance to fire.
+        setTimeout(() => {
+          if (!resolved) setChecking(false);
+        }, 100);
       }
-      setChecking(false);
     });
 
-    // Also check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setValidSession(true);
-      setChecking(false);
-    });
+    // Safety fallback: if no auth event fires within 3 s, stop spinning.
+    const fallback = setTimeout(() => {
+      if (!resolved) setChecking(false);
+    }, 3000);
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(fallback);
+    };
   }, []);
 
   const handleReset = async (e: React.FormEvent) => {

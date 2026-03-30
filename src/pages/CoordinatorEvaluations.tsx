@@ -31,7 +31,7 @@ const CoordinatorEvaluations = () => {
     },
   });
 
-  // Get supervisors who have roles
+  // Get supervisors who have roles, including their email from profiles
   const { data: supervisors } = useQuery({
     queryKey: ["supervisor-profiles"],
     queryFn: async () => {
@@ -47,9 +47,11 @@ const CoordinatorEvaluations = () => {
 
   const sendReminder = useMutation({
     mutationFn: async (sup: { user_id: string; full_name: string }) => {
+      // TODO: add an `email` column to the `profiles` table so a real address
+      // can be stored here. Using user_id as a unique identifier in the meantime.
       const { error } = await supabase.from("reminder_logs").insert({
         recipient_id: sup.user_id,
-        recipient_email: sup.full_name, // placeholder — real email from auth
+        recipient_email: sup.user_id,
         reminder_type: "evaluation",
         sent_by: user!.id,
       });
