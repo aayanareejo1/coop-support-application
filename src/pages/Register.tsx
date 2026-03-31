@@ -13,13 +13,18 @@ const Register = () => {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"student" | "supervisor">("student");
+  const [role, setRole] = useState<"student" | "supervisor" | "coordinator">("student");
+  const [accessCode, setAccessCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password.length < 6) {
       toast.error("Password must be at least 6 characters");
+      return;
+    }
+    if (role === "coordinator" && accessCode !== "CSA-COORD-2024") {
+      toast.error("Invalid coordinator access code");
       return;
     }
     setLoading(true);
@@ -67,16 +72,29 @@ const Register = () => {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="role">Role</Label>
-                <Select value={role} onValueChange={(v) => setRole(v as "student" | "supervisor")}>
+                <Select value={role} onValueChange={(v) => setRole(v as "student" | "supervisor" | "coordinator")}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="student">Student</SelectItem>
                     <SelectItem value="supervisor">Supervisor</SelectItem>
+                    <SelectItem value="coordinator">Coordinator</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              {role === "coordinator" && (
+                <div className="space-y-2">
+                  <Label htmlFor="accessCode">Access Code</Label>
+                  <Input
+                    id="accessCode"
+                    placeholder="Enter coordinator access code"
+                    value={accessCode}
+                    onChange={(e) => setAccessCode(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="fullName">Full Name</Label>
                 <Input

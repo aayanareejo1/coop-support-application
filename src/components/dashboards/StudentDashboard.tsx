@@ -139,12 +139,26 @@ const StudentDashboard = () => {
       const { error: uploadError } = await supabase.storage.from("reports").upload(path, file);
       if (uploadError) throw uploadError;
 
-      const { error } = await supabase.from("work_reports").insert({
-        student_id: user!.id,
-        file_path: path,
-        file_name: file.name,
-      });
-      if (error) throw error;
+      const { data: existing } = await supabase
+        .from("work_reports")
+        .select("id")
+        .eq("student_id", user!.id)
+        .maybeSingle();
+
+      if (existing) {
+        const { error } = await supabase
+          .from("work_reports")
+          .update({ file_path: path, file_name: file.name })
+          .eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("work_reports").insert({
+          student_id: user!.id,
+          file_path: path,
+          file_name: file.name,
+        });
+        if (error) throw error;
+      }
     },
     onSuccess: () => {
       toast.success("Report uploaded!");
@@ -291,7 +305,7 @@ const StudentDashboard = () => {
           {application.status === "accepted" && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> Work-Term Report</CardTitle>
+                <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> {report ? "Replace Report" : "Work-Term Report"}</CardTitle>
                 <CardDescription>
                   {effectiveDeadline && (
                     <span>
@@ -304,14 +318,37 @@ const StudentDashboard = () => {
               </CardHeader>
               <CardContent>
                 {report ? (
-                  <div className="flex items-center gap-3 rounded-lg bg-muted p-4">
-                    <FileText className="h-5 w-5 text-primary" />
-                    <div>
-                      <p className="font-medium">{report.file_name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        Submitted on {new Date(report.submitted_at).toLocaleDateString()}
-                      </p>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 rounded-lg bg-muted p-4">
+                      <FileText className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="font-medium">{report.file_name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Submitted on {new Date(report.submitted_at).toLocaleDateString()}
+                        </p>
+                      </div>
                     </div>
+                    {!isDeadlinePassed && (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">Upload a new PDF to replace your current submission.</p>
+                        <Input
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.type !== "application/pdf") {
+                                toast.error("Only PDF files are accepted");
+                                return;
+                              }
+                              uploadReport.mutate(file);
+                            }
+                          }}
+                          disabled={uploadReport.isPending}
+                        />
+                        {uploadReport.isPending && <p className="text-sm text-muted-foreground mt-2">Uploading...</p>}
+                      </div>
+                    )}
                   </div>
                 ) : isDeadlinePassed ? (
                   <div className="rounded-lg bg-destructive/10 p-4">

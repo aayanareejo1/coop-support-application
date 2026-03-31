@@ -185,6 +185,11 @@ const SupervisorDashboard = () => {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file && pdfStudentName && pdfStudentNumber) {
+                      if (file.type !== "application/pdf") {
+                        toast.error("Only PDF files are accepted");
+                        e.target.value = "";
+                        return;
+                      }
                       uploadPdf.mutate({ file, sName: pdfStudentName, sNum: pdfStudentNumber });
                     } else if (file) {
                       toast.error("Please fill in student name and number first");

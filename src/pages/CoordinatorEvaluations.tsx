@@ -39,23 +39,37 @@ const CoordinatorEvaluations = () => {
       if (error) throw error;
       if (!roles || roles.length === 0) return [];
       const userIds = roles.map((r) => r.user_id);
-      const { data: profiles, error: pErr } = await supabase.from("profiles").select("*").in("user_id", userIds);
+      const { data: profiles, error: pErr } = await supabase.from("profiles").select("user_id, full_name, email").in("user_id", userIds);
       if (pErr) throw pErr;
       return profiles;
     },
   });
 
   const sendReminder = useMutation({
-    mutationFn: async (sup: { user_id: string; full_name: string }) => {
-      // TODO: add an `email` column to the `profiles` table so a real address
-      // can be stored here. Using user_id as a unique identifier in the meantime.
+    mutationFn: async (sup: { user_id: string; full_name: string; email: string | null }) => {
       const { error } = await supabase.from("reminder_logs").insert({
         recipient_id: sup.user_id,
-        recipient_email: sup.user_id,
+        recipient_email: sup.email ?? `supervisor-${sup.user_id.slice(0, 8)}@pending`,
         reminder_type: "evaluation",
         sent_by: user!.id,
       });
       if (error) throw error;
+      try {
+        await fetch(import.meta.env.VITE_SUPABASE_URL + "/functions/v1/send-reminder", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            recipient_email: sup.email ?? `supervisor-${sup.user_id.slice(0, 8)}@pending`,
+            recipient_name: sup.full_name,
+            reminder_type: "evaluation",
+          }),
+        });
+      } catch (err) {
+        console.error("send-reminder edge function error:", err);
+      }
     },
     onSuccess: () => {
       toast.success("Reminder logged");
@@ -95,6 +109,7 @@ const CoordinatorEvaluations = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
                     <TableHead>Last Reminder</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -103,6 +118,7 @@ const CoordinatorEvaluations = () => {
                   {supervisorsWithoutEvals.map((sup) => (
                     <TableRow key={sup.user_id}>
                       <TableCell className="font-medium">{sup.full_name || "Unknown"}</TableCell>
+                      <TableCell className="text-sm">{sup.email || "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {lastReminderBySupervisor.get(sup.user_id)
                           ? new Date(lastReminderBySupervisor.get(sup.user_id)!).toLocaleString()

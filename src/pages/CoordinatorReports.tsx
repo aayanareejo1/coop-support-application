@@ -1,4 +1,5 @@
 import AppLayout from "@/components/AppLayout";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,12 +8,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FileText, CheckCircle, XCircle, Bell, Upload, Clock } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { FileText, CheckCircle, XCircle, Bell, Upload, Clock, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 
 const CoordinatorReports = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [newDeadlineDate, setNewDeadlineDate] = useState("");
 
   const { data: applications } = useQuery({
     queryKey: ["accepted-applications"],
@@ -79,10 +82,42 @@ const CoordinatorReports = () => {
         sent_by: user!.id,
       });
       if (error) throw error;
+      try {
+        await fetch(import.meta.env.VITE_SUPABASE_URL + "/functions/v1/send-reminder", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            recipient_email: app.email,
+            recipient_name: app.name,
+            reminder_type: "report",
+          }),
+        });
+      } catch (err) {
+        console.error("send-reminder edge function error:", err);
+      }
     },
     onSuccess: () => {
       toast.success("Reminder logged successfully");
       queryClient.invalidateQueries({ queryKey: ["reminder-logs"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateDeadline = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from("deadlines")
+        .update({ deadline_date: newDeadlineDate })
+        .eq("id", deadline!.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Deadline updated!");
+      setNewDeadlineDate("");
+      queryClient.invalidateQueries({ queryKey: ["deadlines"] });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -138,6 +173,34 @@ const CoordinatorReports = () => {
                 <span className="text-sm">
                   Default deadline: <strong>{new Date(deadline.deadline_date).toLocaleDateString()}</strong>
                 </span>
+              </CardContent>
+            </Card>
+          )}
+
+          {deadline && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <CalendarClock className="h-4 w-4" /> Set Deadline
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex items-end gap-3">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="deadline-input" className="text-xs text-muted-foreground">New date</Label>
+                  <Input
+                    id="deadline-input"
+                    type="date"
+                    value={newDeadlineDate}
+                    onChange={(e) => setNewDeadlineDate(e.target.value)}
+                    disabled={updateDeadline.isPending}
+                  />
+                </div>
+                <Button
+                  onClick={() => updateDeadline.mutate()}
+                  disabled={!newDeadlineDate || updateDeadline.isPending}
+                >
+                  {updateDeadline.isPending ? "Saving..." : "Update Deadline"}
+                </Button>
               </CardContent>
             </Card>
           )}

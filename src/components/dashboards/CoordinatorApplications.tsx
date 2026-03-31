@@ -54,7 +54,7 @@ const CoordinatorApplications = () => {
 
   const updateApp = useMutation({
     mutationFn: async () => {
-      const isProvisional = newStatus === "provisional_accepted" || newStatus === "provisional_rejected";
+      const isProvisional = newStatus === "provisional" || newStatus === "provisional_accepted" || newStatus === "provisional_rejected";
       const isFinal = newStatus === "accepted" || newStatus === "rejected";
 
       const updateData: Record<string, unknown> = { status: newStatus, reviewer_notes: notes };
@@ -234,6 +234,7 @@ const CoordinatorApplications = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="provisional">Provisional</SelectItem>
                     <SelectItem value="provisional_accepted">Provisional Accept</SelectItem>
                     <SelectItem value="provisional_rejected">Provisional Reject</SelectItem>
                     <SelectItem value="accepted">Final Accept</SelectItem>

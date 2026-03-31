@@ -69,12 +69,8 @@ const CoordinatorOverview = () => {
   const totalReports = reports?.length ?? 0;
   const missingReports = Math.max(0, accepted - totalReports);
 
-  // Students with evaluations (by student_number match)
-  const acceptedStudentNumbers = new Set(
-    applications?.filter((a) => a.status === "accepted").map((a) => a.student_number)
-  );
-  const evaluatedStudentNumbers = new Set(evaluations?.map((e) => e.student_number));
-  const missingEvaluations = [...acceptedStudentNumbers].filter((sn) => !evaluatedStudentNumbers.has(sn)).length;
+  const reportedStudentIds = new Set(reports?.map((r) => r.student_id));
+  const missingEvaluations = applications?.filter((a) => a.status === "accepted" && !reportedStudentIds.has(a.student_id)).length ?? 0;
 
   const stats = [
     { label: "Prov. Accepted", value: provAccepted, icon: CheckCircle, color: "text-primary" },
@@ -83,7 +79,7 @@ const CoordinatorOverview = () => {
     { label: "Finally Rejected", value: rejected, icon: XCircle, color: "text-destructive" },
     { label: "Pending", value: pending, icon: Clock, color: "text-muted-foreground" },
     { label: "Missing Reports", value: missingReports, icon: FileText, color: "text-destructive" },
-    { label: "Missing Evaluations", value: missingEvaluations, icon: Users, color: "text-destructive" },
+    { label: "No Report Submitted", value: missingEvaluations, icon: Users, color: "text-destructive" },
     { label: "Placement Issues", value: placementIssues?.length ?? 0, icon: Flag, color: "text-[hsl(var(--warning))]" },
   ];
 
