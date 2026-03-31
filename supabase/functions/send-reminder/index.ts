@@ -50,7 +50,7 @@ serve(async (req) => {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "Co-op Support <onboarding@resend.dev>",
+        from: Deno.env.get("RESEND_FROM_EMAIL") ?? "Co-op Support <onboarding@resend.dev>",
         to: [recipient_email],
         subject,
         html,

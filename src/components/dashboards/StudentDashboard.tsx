@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Send, Upload, CheckCircle, Clock, XCircle, FileText, Download, AlertTriangle } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Send, Upload, CheckCircle, Clock, XCircle, FileText, Download, AlertTriangle, CalendarClock } from "lucide-react";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof CheckCircle; color?: string }> = {
   pending: { label: "Pending Review", variant: "secondary", icon: Clock },
@@ -26,6 +27,8 @@ const StudentDashboard = () => {
   const [studentNumber, setStudentNumber] = useState("");
   const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<{ studentNumber?: string; email?: string }>({});
+  const [extReason, setExtReason] = useState("");
+  const [showExtForm, setShowExtForm] = useState(false);
 
   const { data: application, isLoading: appLoading } = useQuery({
     queryKey: ["my-application", user?.id],
@@ -88,6 +91,22 @@ const StudentDashboard = () => {
         .select("*")
         .eq("student_id", user!.id)
         .eq("resolved", false)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  const { data: extensionRequest } = useQuery({
+    queryKey: ["my-extension-request", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("deadline_extension_requests")
+        .select("*")
+        .eq("student_id", user!.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
       if (error) throw error;
       return data;
@@ -163,6 +182,23 @@ const StudentDashboard = () => {
     onSuccess: () => {
       toast.success("Report uploaded!");
       queryClient.invalidateQueries({ queryKey: ["my-report"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const requestExtension = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("deadline_extension_requests").insert({
+        student_id: user!.id,
+        reason: extReason,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Extension request submitted");
+      setExtReason("");
+      setShowExtForm(false);
+      queryClient.invalidateQueries({ queryKey: ["my-extension-request"] });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -298,6 +334,55 @@ const StudentDashboard = () => {
                     Download
                   </a>
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {application.status === "accepted" && !extension && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5" /> Deadline Extension</CardTitle>
+                <CardDescription>Request more time to submit your work-term report</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {extensionRequest ? (
+                  <div className="rounded-lg bg-muted p-4 text-sm space-y-1">
+                    <p className="font-medium">
+                      Request status:{" "}
+                      <span className={
+                        extensionRequest.status === "approved" ? "text-[hsl(var(--success))]" :
+                        extensionRequest.status === "rejected" ? "text-destructive" :
+                        "text-muted-foreground"
+                      }>
+                        {extensionRequest.status.charAt(0).toUpperCase() + extensionRequest.status.slice(1)}
+                      </span>
+                    </p>
+                    <p className="text-muted-foreground">"{extensionRequest.reason}"</p>
+                    <p className="text-xs text-muted-foreground">Submitted {new Date(extensionRequest.created_at).toLocaleDateString()}</p>
+                  </div>
+                ) : showExtForm ? (
+                  <div className="space-y-3">
+                    <Textarea
+                      placeholder="Explain why you need more time..."
+                      value={extReason}
+                      onChange={(e) => setExtReason(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => requestExtension.mutate()}
+                        disabled={!extReason.trim() || requestExtension.isPending}
+                      >
+                        {requestExtension.isPending ? "Submitting..." : "Submit Request"}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setShowExtForm(false)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setShowExtForm(true)}>
+                    Request Extension
+                  </Button>
+                )}
               </CardContent>
             </Card>
           )}

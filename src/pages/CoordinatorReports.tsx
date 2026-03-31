@@ -9,13 +9,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FileText, CheckCircle, XCircle, Bell, Upload, Clock, CalendarClock } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { FileText, CheckCircle, XCircle, Bell, Upload, Clock, CalendarClock, ClipboardCheck } from "lucide-react";
 import { toast } from "sonner";
 
 const CoordinatorReports = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [newDeadlineDate, setNewDeadlineDate] = useState("");
+  const [reviewDialog, setReviewDialog] = useState<{ id: string; student_id: string; file_name: string; status: string; feedback: string | null } | null>(null);
+  const [reviewStatus, setReviewStatus] = useState("reviewed");
+  const [reviewFeedback, setReviewFeedback] = useState("");
+  const [approveDates, setApproveDates] = useState<Record<string, string>>({});
 
   const { data: applications } = useQuery({
     queryKey: ["accepted-applications"],
@@ -60,6 +67,18 @@ const CoordinatorReports = () => {
     queryKey: ["reminder-logs", "report"],
     queryFn: async () => {
       const { data, error } = await supabase.from("reminder_logs").select("*").eq("reminder_type", "report").order("sent_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const { data: extensionRequests } = useQuery({
+    queryKey: ["extension-requests"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("deadline_extension_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -118,6 +137,48 @@ const CoordinatorReports = () => {
       toast.success("Deadline updated!");
       setNewDeadlineDate("");
       queryClient.invalidateQueries({ queryKey: ["deadlines"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const reviewReport = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from("work_reports")
+        .update({ status: reviewStatus, reviewed_by: user!.id, reviewed_at: new Date().toISOString(), feedback: reviewFeedback || null })
+        .eq("id", reviewDialog!.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Report reviewed");
+      setReviewDialog(null);
+      setReviewFeedback("");
+      queryClient.invalidateQueries({ queryKey: ["all-reports"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const resolveExtRequest = useMutation({
+    mutationFn: async ({ id, student_id, status, newDeadline }: { id: string; student_id: string; status: "approved" | "rejected"; newDeadline?: string }) => {
+      const { error } = await supabase
+        .from("deadline_extension_requests")
+        .update({ status, reviewed_by: user!.id, reviewed_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      if (status === "approved" && newDeadline) {
+        const { error: extError } = await supabase.from("deadline_extensions").insert({
+          student_id,
+          new_deadline: new Date(newDeadline).toISOString(),
+          reason: "Approved via extension request",
+          granted_by: user!.id,
+        });
+        if (extError) throw extError;
+      }
+    },
+    onSuccess: () => {
+      toast.success("Extension request resolved");
+      queryClient.invalidateQueries({ queryKey: ["extension-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["all-extensions"] });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -268,30 +329,49 @@ const CoordinatorReports = () => {
                         )}
                       </TableCell>
                       <TableCell>
-                        {report ? (
-                          <Badge variant="default" className="bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]">
-                            <CheckCircle className="mr-1 h-3 w-3" /> Submitted
-                          </Badge>
-                        ) : (
-                          <Badge variant="destructive">
-                            <XCircle className="mr-1 h-3 w-3" /> Missing
-                          </Badge>
+                        {report ? (() => {
+                          const s = report.status ?? "pending_review";
+                          const map: Record<string, { label: string; className: string }> = {
+                            pending_review: { label: "Pending Review", className: "bg-yellow-100 text-yellow-800 border-yellow-200" },
+                            reviewed:       { label: "Reviewed",       className: "bg-blue-100 text-blue-800 border-blue-200" },
+                            approved:       { label: "Approved",       className: "bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]" },
+                            rejected:       { label: "Rejected",       className: "" },
+                          };
+                          const cfg = map[s] ?? map.pending_review;
+                          return <Badge variant={s === "rejected" ? "destructive" : "outline"} className={cfg.className}>{cfg.label}</Badge>;
+                        })() : (
+                          <Badge variant="destructive"><XCircle className="mr-1 h-3 w-3" /> Missing</Badge>
                         )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {lastReminder ? new Date(lastReminder).toLocaleString() : "Never"}
                       </TableCell>
                       <TableCell>
-                        {!report && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => sendReminder.mutate({ student_id: app.student_id, email: app.email, name: app.name })}
-                            disabled={sendReminder.isPending}
-                          >
-                            <Bell className="h-4 w-4 mr-1" /> Remind
-                          </Button>
-                        )}
+                        <div className="flex gap-1">
+                          {report && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setReviewDialog(report);
+                                setReviewStatus(report.status ?? "reviewed");
+                                setReviewFeedback(report.feedback ?? "");
+                              }}
+                            >
+                              <ClipboardCheck className="h-4 w-4 mr-1" /> Review
+                            </Button>
+                          )}
+                          {!report && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => sendReminder.mutate({ student_id: app.student_id, email: app.email, name: app.name })}
+                              disabled={sendReminder.isPending}
+                            >
+                              <Bell className="h-4 w-4 mr-1" /> Remind
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -307,7 +387,117 @@ const CoordinatorReports = () => {
             </Table>
           </CardContent>
         </Card>
+        {/* Extension Requests */}
+        {extensionRequests && extensionRequests.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5" /> Extension Requests</CardTitle>
+              <CardDescription>Student-submitted requests for deadline extensions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Student</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>Submitted</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {extensionRequests.map((req) => (
+                    <TableRow key={req.id}>
+                      <TableCell className="font-medium">{applications?.find((a) => a.student_id === req.student_id)?.name ?? req.student_id.slice(0, 8)}</TableCell>
+                      <TableCell className="text-sm max-w-[200px] truncate">{req.reason}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{new Date(req.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        {req.status === "pending" ? (
+                          <Badge variant="secondary">Pending</Badge>
+                        ) : req.status === "approved" ? (
+                          <Badge variant="outline" className="bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]">Approved</Badge>
+                        ) : (
+                          <Badge variant="destructive">Rejected</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {req.status === "pending" && (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="date"
+                              className="w-[140px] h-8 text-xs"
+                              value={approveDates[req.id] ?? ""}
+                              onChange={(e) => setApproveDates((prev) => ({ ...prev, [req.id]: e.target.value }))}
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs"
+                              disabled={!approveDates[req.id] || resolveExtRequest.isPending}
+                              onClick={() => resolveExtRequest.mutate({ id: req.id, student_id: req.student_id, status: "approved", newDeadline: approveDates[req.id] })}
+                            >
+                              <CheckCircle className="h-3 w-3 mr-1" /> Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-xs text-destructive"
+                              disabled={resolveExtRequest.isPending}
+                              onClick={() => resolveExtRequest.mutate({ id: req.id, student_id: req.student_id, status: "rejected" })}
+                            >
+                              <XCircle className="h-3 w-3 mr-1" /> Reject
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
       </div>
+
+      {/* Review Report Dialog */}
+      <Dialog open={!!reviewDialog} onOpenChange={(open) => !open && setReviewDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Review Report</DialogTitle>
+          </DialogHeader>
+          {reviewDialog && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">File: <strong>{reviewDialog.file_name}</strong></p>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={reviewStatus} onValueChange={setReviewStatus}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending_review">Pending Review</SelectItem>
+                    <SelectItem value="reviewed">Reviewed</SelectItem>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Feedback (optional)</Label>
+                <Textarea
+                  value={reviewFeedback}
+                  onChange={(e) => setReviewFeedback(e.target.value)}
+                  placeholder="Leave feedback for the student..."
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviewDialog(null)}>Cancel</Button>
+            <Button onClick={() => reviewReport.mutate()} disabled={reviewReport.isPending}>
+              {reviewReport.isPending ? "Saving..." : "Save Review"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 };
