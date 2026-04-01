@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Star, Upload, FileText } from "lucide-react";
+import { Star, Upload, Link, CheckCircle, XCircle, Clock } from "lucide-react";
 
 const SupervisorDashboard = () => {
   const { user } = useAuth();
@@ -24,6 +24,20 @@ const SupervisorDashboard = () => {
   const [rating, setRating] = useState("3");
   const [comments, setComments] = useState("");
   const [recommendation, setRecommendation] = useState("");
+
+  const { data: myLinks } = useQuery({
+    queryKey: ["my-links", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("supervisor_student_links" as any)
+        .select("*")
+        .eq("supervisor_id", user!.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data as { id: string; student_number: string; status: string; created_at: string }[];
+    },
+    enabled: !!user,
+  });
 
   const { data: evaluations } = useQuery({
     queryKey: ["my-evaluations", user?.id],
@@ -64,6 +78,22 @@ const SupervisorDashboard = () => {
     onError: (e) => toast.error(e.message),
   });
 
+  const requestLink = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("supervisor_student_links" as any).insert({
+        supervisor_id: user!.id,
+        student_number: linkStudentNumber,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Link request submitted — awaiting coordinator approval");
+      setLinkStudentNumber("");
+      queryClient.invalidateQueries({ queryKey: ["my-links"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const uploadPdf = useMutation({
     mutationFn: async ({ file, sName, sNum }: { file: File; sName: string; sNum: string }) => {
       const path = `${user!.id}/${Date.now()}_${file.name}`;
@@ -89,6 +119,7 @@ const SupervisorDashboard = () => {
 
   const [pdfStudentName, setPdfStudentName] = useState("");
   const [pdfStudentNumber, setPdfStudentNumber] = useState("");
+  const [linkStudentNumber, setLinkStudentNumber] = useState("");
 
   return (
     <div className="space-y-6">
@@ -98,6 +129,47 @@ const SupervisorDashboard = () => {
         </h1>
         <p className="text-muted-foreground">Submit evaluations for students you supervise</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Link className="h-5 w-5" /> My Students</CardTitle>
+          <CardDescription>Request to be linked to a student by entering their student number</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); requestLink.mutate(); }}
+            className="flex gap-2"
+          >
+            <Input
+              placeholder="Student number"
+              value={linkStudentNumber}
+              onChange={(e) => setLinkStudentNumber(e.target.value)}
+              className="max-w-[200px]"
+              required
+            />
+            <Button type="submit" size="sm" disabled={requestLink.isPending}>
+              {requestLink.isPending ? "Sending..." : "Request Link"}
+            </Button>
+          </form>
+          {myLinks && myLinks.length > 0 && (
+            <div className="space-y-2">
+              {myLinks.map((link) => (
+                <div key={link.id} className="flex items-center gap-3 rounded-lg bg-muted px-4 py-2 text-sm">
+                  {link.status === "approved" ? (
+                    <CheckCircle className="h-4 w-4 text-[hsl(var(--success))]" />
+                  ) : link.status === "rejected" ? (
+                    <XCircle className="h-4 w-4 text-destructive" />
+                  ) : (
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="font-medium">Student #{link.student_number}</span>
+                  <span className="capitalize text-muted-foreground">{link.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="form">
         <TabsList>

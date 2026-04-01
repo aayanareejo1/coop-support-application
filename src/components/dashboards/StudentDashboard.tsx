@@ -9,7 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Upload, CheckCircle, Clock, XCircle, FileText, Download, AlertTriangle, CalendarClock } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Send, Upload, CheckCircle, Clock, XCircle, FileText, Download, AlertTriangle, CalendarClock, Star, Building2 } from "lucide-react";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof CheckCircle; color?: string }> = {
   pending: { label: "Pending Review", variant: "secondary", icon: Clock },
@@ -29,6 +30,11 @@ const StudentDashboard = () => {
   const [errors, setErrors] = useState<{ studentNumber?: string; email?: string }>({});
   const [extReason, setExtReason] = useState("");
   const [showExtForm, setShowExtForm] = useState(false);
+  const [empEmployer, setEmpEmployer] = useState("");
+  const [empJobTitle, setEmpJobTitle] = useState("");
+  const [empRating, setEmpRating] = useState("3");
+  const [empComments, setEmpComments] = useState("");
+  const [showEmpForm, setShowEmpForm] = useState(false);
 
   const { data: application, isLoading: appLoading } = useQuery({
     queryKey: ["my-application", user?.id],
@@ -114,6 +120,20 @@ const StudentDashboard = () => {
     enabled: !!user,
   });
 
+  const { data: employerEvals } = useQuery({
+    queryKey: ["my-employer-evals", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("employer_evaluations" as any)
+        .select("*")
+        .eq("student_id", user!.id)
+        .order("submitted_at", { ascending: false });
+      if (error) throw error;
+      return data as { id: string; employer_name: string; job_title: string | null; rating: number | null; comments: string | null; submitted_at: string }[];
+    },
+    enabled: !!user,
+  });
+
   // Report template
   const { data: templateUrl } = useQuery({
     queryKey: ["report-template"],
@@ -182,6 +202,29 @@ const StudentDashboard = () => {
     onSuccess: () => {
       toast.success("Report uploaded!");
       queryClient.invalidateQueries({ queryKey: ["my-report"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const submitEmployerEval = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("employer_evaluations" as any).insert({
+        student_id: user!.id,
+        employer_name: empEmployer,
+        job_title: empJobTitle || null,
+        rating: parseInt(empRating),
+        comments: empComments || null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Employer evaluation submitted!");
+      setEmpEmployer("");
+      setEmpJobTitle("");
+      setEmpRating("3");
+      setEmpComments("");
+      setShowEmpForm(false);
+      queryClient.invalidateQueries({ queryKey: ["my-employer-evals"] });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -334,6 +377,79 @@ const StudentDashboard = () => {
                     Download
                   </a>
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {application.status === "accepted" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" /> Employer Evaluation</CardTitle>
+                <CardDescription>Rate your work placement experience</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {employerEvals && employerEvals.length > 0 && (
+                  <div className="space-y-2 mb-4">
+                    {employerEvals.map((ev) => (
+                      <div key={ev.id} className="rounded-lg bg-muted p-4 text-sm space-y-1">
+                        <div className="flex items-center justify-between">
+                          <p className="font-medium">{ev.employer_name}{ev.job_title && ` — ${ev.job_title}`}</p>
+                          {ev.rating && (
+                            <div className="flex items-center gap-1 text-[hsl(var(--warning))]">
+                              <Star className="h-3 w-3 fill-current" />{ev.rating}/5
+                            </div>
+                          )}
+                        </div>
+                        {ev.comments && <p className="text-muted-foreground">{ev.comments}</p>}
+                        <p className="text-xs text-muted-foreground">{new Date(ev.submitted_at).toLocaleDateString()}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {showEmpForm ? (
+                  <form
+                    onSubmit={(e) => { e.preventDefault(); submitEmployerEval.mutate(); }}
+                    className="space-y-3"
+                  >
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label>Employer Name</Label>
+                        <Input value={empEmployer} onChange={(e) => setEmpEmployer(e.target.value)} required placeholder="Acme Corp" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Job Title <span className="text-muted-foreground">(optional)</span></Label>
+                        <Input value={empJobTitle} onChange={(e) => setEmpJobTitle(e.target.value)} placeholder="Software Developer" />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Overall Rating</Label>
+                      <Select value={empRating} onValueChange={setEmpRating}>
+                        <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <SelectItem key={n} value={String(n)}>
+                              {n} — {["Poor", "Below Average", "Average", "Good", "Excellent"][n - 1]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Comments <span className="text-muted-foreground">(optional)</span></Label>
+                      <Textarea value={empComments} onChange={(e) => setEmpComments(e.target.value)} placeholder="Describe your experience..." />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="submit" size="sm" disabled={submitEmployerEval.isPending}>
+                        {submitEmployerEval.isPending ? "Submitting..." : "Submit"}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setShowEmpForm(false)}>Cancel</Button>
+                    </div>
+                  </form>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setShowEmpForm(true)}>
+                    {employerEvals && employerEvals.length > 0 ? "Add Another Evaluation" : "Evaluate Your Employer"}
+                  </Button>
+                )}
               </CardContent>
             </Card>
           )}

@@ -12,10 +12,14 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
+import { UserCheck, CheckCircle, XCircle, Lock } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
 type ApplicationStatus = Database["public"]["Enums"]["application_status"];
-type Application = Database["public"]["Tables"]["applications"]["Row"];
+type Application = Database["public"]["Tables"]["applications"]["Row"] & {
+  assigned_coordinator_id?: string | null;
+  placement_status?: string | null;
+};
 
 const statusBadge: Record<ApplicationStatus, { variant: "default" | "secondary" | "destructive" | "outline"; label: string }> = {
   pending: { variant: "secondary", label: "Pending" },
@@ -26,6 +30,14 @@ const statusBadge: Record<ApplicationStatus, { variant: "default" | "secondary" 
   rejected: { variant: "destructive", label: "Rejected" },
 };
 
+const placementLabels: Record<string, string> = {
+  onboarding: "Onboarding",
+  work_term: "Work Term",
+  study_term: "Study Term",
+  graduated: "Graduated",
+  withdrawn: "Withdrawn",
+};
+
 const CoordinatorApplications = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -33,13 +45,12 @@ const CoordinatorApplications = () => {
   const [selected, setSelected] = useState<Application | null>(null);
   const [newStatus, setNewStatus] = useState<ApplicationStatus>("pending");
   const [notes, setNotes] = useState("");
+  const [placementStatus, setPlacementStatus] = useState("");
 
-  // Extension dialog
   const [extDialog, setExtDialog] = useState<Application | null>(null);
   const [extDate, setExtDate] = useState("");
   const [extReason, setExtReason] = useState("");
 
-  // Placement issue dialog
   const [issueDialog, setIssueDialog] = useState<Application | null>(null);
   const [issueReason, setIssueReason] = useState("");
 
@@ -48,7 +59,41 @@ const CoordinatorApplications = () => {
     queryFn: async () => {
       const { data, error } = await supabase.from("applications").select("*").order("created_at", { ascending: false });
       if (error) throw error;
-      return data;
+      return data as Application[];
+    },
+  });
+
+  const { data: coordinatorProfiles } = useQuery({
+    queryKey: ["coordinator-profiles"],
+    queryFn: async () => {
+      const { data: roles } = await supabase.from("user_roles").select("user_id").eq("role", "coordinator" as any);
+      if (!roles?.length) return [];
+      const ids = roles.map((r) => r.user_id);
+      const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", ids);
+      return profiles ?? [];
+    },
+  });
+
+  const { data: supervisorLinks } = useQuery({
+    queryKey: ["supervisor-links"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("supervisor_student_links" as any)
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data as { id: string; supervisor_id: string; student_number: string; status: string; created_at: string }[];
+    },
+  });
+
+  const { data: supervisorProfiles } = useQuery({
+    queryKey: ["supervisor-profiles"],
+    queryFn: async () => {
+      const { data: roles } = await supabase.from("user_roles").select("user_id").eq("role", "supervisor" as any);
+      if (!roles?.length) return [];
+      const ids = roles.map((r) => r.user_id);
+      const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", ids);
+      return profiles ?? [];
     },
   });
 
@@ -56,20 +101,34 @@ const CoordinatorApplications = () => {
     mutationFn: async () => {
       const isProvisional = newStatus === "provisional" || newStatus === "provisional_accepted" || newStatus === "provisional_rejected";
       const isFinal = newStatus === "accepted" || newStatus === "rejected";
-
-      const updateData: Record<string, unknown> = { status: newStatus, reviewer_notes: notes };
+      const updateData: Record<string, unknown> = {
+        status: newStatus,
+        reviewer_notes: notes,
+        placement_status: placementStatus || null,
+      };
       if (isProvisional) updateData.provisional_decision_at = new Date().toISOString();
       if (isFinal) updateData.final_decision_at = new Date().toISOString();
-
-      const { error } = await supabase
-        .from("applications")
-        .update(updateData)
-        .eq("id", selected!.id);
+      const { error } = await supabase.from("applications").update(updateData).eq("id", selected!.id);
       if (error) throw error;
     },
     onSuccess: () => {
       toast.success("Application updated");
       setSelected(null);
+      queryClient.invalidateQueries({ queryKey: ["all-applications"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const assignToMe = useMutation({
+    mutationFn: async (appId: string) => {
+      const { error } = await supabase
+        .from("applications")
+        .update({ assigned_coordinator_id: user!.id } as any)
+        .eq("id", appId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Student assigned to you");
       queryClient.invalidateQueries({ queryKey: ["all-applications"] });
     },
     onError: (e) => toast.error(e.message),
@@ -112,7 +171,28 @@ const CoordinatorApplications = () => {
     onError: (e) => toast.error(e.message),
   });
 
+  const resolveLink = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: "approved" | "rejected" }) => {
+      const { error } = await supabase
+        .from("supervisor_student_links" as any)
+        .update({ status, reviewed_by: user!.id, reviewed_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Link request resolved");
+      queryClient.invalidateQueries({ queryKey: ["supervisor-links"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const filtered = applications?.filter((a) => filter === "all" || a.status === filter);
+
+  const getCoordName = (id?: string | null) =>
+    id ? (coordinatorProfiles?.find((p) => p.user_id === id)?.full_name ?? id.slice(0, 8)) : null;
+
+  const getSupervisorName = (id: string) =>
+    supervisorProfiles?.find((p) => p.user_id === id)?.full_name ?? id.slice(0, 8);
 
   return (
     <div className="space-y-6">
@@ -150,6 +230,8 @@ const CoordinatorApplications = () => {
                   <TableHead>Student #</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Placement</TableHead>
+                  <TableHead>Coordinator</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -157,6 +239,8 @@ const CoordinatorApplications = () => {
               <TableBody>
                 {filtered?.map((app) => {
                   const cfg = statusBadge[app.status];
+                  const assignedToOther = app.assigned_coordinator_id && app.assigned_coordinator_id !== user?.id;
+                  const assignedToMe = app.assigned_coordinator_id === user?.id;
                   return (
                     <TableRow key={app.id}>
                       <TableCell className="font-medium">{app.name}</TableCell>
@@ -165,30 +249,63 @@ const CoordinatorApplications = () => {
                       <TableCell>
                         <Badge variant={cfg.variant}>{cfg.label}</Badge>
                       </TableCell>
+                      <TableCell>
+                        {app.placement_status ? (
+                          <Badge variant="outline" className="text-xs">{placementLabels[app.placement_status] ?? app.placement_status}</Badge>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {assignedToMe ? (
+                          <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">You</Badge>
+                        ) : app.assigned_coordinator_id ? (
+                          <span className="text-muted-foreground text-xs">{getCoordName(app.assigned_coordinator_id)}</span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">Unassigned</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(app.created_at).toLocaleDateString()}
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setSelected(app);
-                              setNewStatus(app.status);
-                              setNotes(app.reviewer_notes || "");
-                            }}
-                          >
-                            Review
-                          </Button>
-                          {app.status === "accepted" && (
-                            <Button variant="ghost" size="sm" onClick={() => setExtDialog(app)}>
-                              Extend
-                            </Button>
+                        <div className="flex gap-1 flex-wrap">
+                          {assignedToOther ? (
+                            <span className="flex items-center gap-1 text-xs text-muted-foreground px-2 py-1">
+                              <Lock className="h-3 w-3" /> Locked
+                            </span>
+                          ) : (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelected(app);
+                                  setNewStatus(app.status);
+                                  setNotes(app.reviewer_notes || "");
+                                  setPlacementStatus(app.placement_status || "");
+                                }}
+                              >
+                                Review
+                              </Button>
+                              {!assignedToMe && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => assignToMe.mutate(app.id)}
+                                  disabled={assignToMe.isPending}
+                                >
+                                  <UserCheck className="h-3 w-3 mr-1" /> Assign
+                                </Button>
+                              )}
+                              {app.status === "accepted" && (
+                                <Button variant="ghost" size="sm" onClick={() => setExtDialog(app)}>
+                                  Extend
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="sm" onClick={() => setIssueDialog(app)}>
+                                Flag
+                              </Button>
+                            </>
                           )}
-                          <Button variant="ghost" size="sm" onClick={() => setIssueDialog(app)}>
-                            Flag
-                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -196,7 +313,7 @@ const CoordinatorApplications = () => {
                 })}
                 {(!filtered || filtered.length === 0) && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                       No applications found
                     </TableCell>
                   </TableRow>
@@ -206,6 +323,59 @@ const CoordinatorApplications = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Supervisor Link Requests */}
+      {supervisorLinks && supervisorLinks.filter((l) => l.status === "pending").length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <UserCheck className="h-4 w-4" /> Supervisor Link Requests
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Supervisor</TableHead>
+                  <TableHead>Student #</TableHead>
+                  <TableHead>Requested</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {supervisorLinks.filter((l) => l.status === "pending").map((link) => (
+                  <TableRow key={link.id}>
+                    <TableCell className="font-medium">{getSupervisorName(link.supervisor_id)}</TableCell>
+                    <TableCell>{link.student_number}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{new Date(link.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={resolveLink.isPending}
+                          onClick={() => resolveLink.mutate({ id: link.id, status: "approved" })}
+                        >
+                          <CheckCircle className="h-3 w-3 mr-1" /> Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          disabled={resolveLink.isPending}
+                          onClick={() => resolveLink.mutate({ id: link.id, status: "rejected" })}
+                        >
+                          <XCircle className="h-3 w-3 mr-1" /> Reject
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Review Dialog */}
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
@@ -229,9 +399,7 @@ const CoordinatorApplications = () => {
               <div className="space-y-2">
                 <Label>Decision</Label>
                 <Select value={newStatus} onValueChange={(v) => setNewStatus(v as ApplicationStatus)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pending">Pending</SelectItem>
                     <SelectItem value="provisional">Provisional</SelectItem>
@@ -239,6 +407,20 @@ const CoordinatorApplications = () => {
                     <SelectItem value="provisional_rejected">Provisional Reject</SelectItem>
                     <SelectItem value="accepted">Final Accept</SelectItem>
                     <SelectItem value="rejected">Final Reject</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Placement Status</Label>
+                <Select value={placementStatus} onValueChange={setPlacementStatus}>
+                  <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="onboarding">Onboarding</SelectItem>
+                    <SelectItem value="work_term">Work Term</SelectItem>
+                    <SelectItem value="study_term">Study Term</SelectItem>
+                    <SelectItem value="graduated">Graduated</SelectItem>
+                    <SelectItem value="withdrawn">Withdrawn</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
