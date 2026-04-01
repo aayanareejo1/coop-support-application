@@ -1,14 +1,24 @@
 import AppLayout from "@/components/AppLayout";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, XCircle, Clock, FileText, AlertTriangle, Users, Flag } from "lucide-react";
+import { CheckCircle, XCircle, Clock, FileText, AlertTriangle, Users, Flag, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 
+const placementLabels: Record<string, string> = {
+  onboarding: "Onboarding",
+  work_term: "Work Term",
+  study_term: "Study Term",
+  graduated: "Graduated",
+  withdrawn: "Withdrawn",
+};
+
 const CoordinatorOverview = () => {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: applications } = useQuery({
@@ -19,6 +29,8 @@ const CoordinatorOverview = () => {
       return data;
     },
   });
+
+  const myStudents = applications?.filter((a: any) => a.assigned_coordinator_id === user?.id) ?? [];
 
   const { data: reports } = useQuery({
     queryKey: ["all-reports"],
@@ -111,6 +123,58 @@ const CoordinatorOverview = () => {
             );
           })}
         </div>
+
+        {/* My Assigned Students */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserCheck className="h-5 w-5 text-primary" /> My Assigned Students
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {myStudents.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No students assigned to you yet. Use the Applications page to assign students.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Student #</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Placement</TableHead>
+                    <TableHead>Applied</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {myStudents.map((app: any) => (
+                    <TableRow key={app.id}>
+                      <TableCell className="font-medium">{app.name}</TableCell>
+                      <TableCell>{app.student_number}</TableCell>
+                      <TableCell>
+                        <Badge variant={
+                          app.status === "accepted" ? "default" :
+                          app.status === "rejected" ? "destructive" :
+                          app.status === "provisional_accepted" ? "outline" :
+                          "secondary"
+                        }>
+                          {app.status.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {app.placement_status ? (
+                          <Badge variant="outline" className="text-xs">{placementLabels[app.placement_status] ?? app.placement_status}</Badge>
+                        ) : <span className="text-muted-foreground text-xs">—</span>}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {new Date(app.created_at).toLocaleDateString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Placement Issues Section */}
         {placementIssues && placementIssues.length > 0 && (
